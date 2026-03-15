@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<title>4 Kişi WebRTC P2P Chat</title>
+<style>
+  body { font-family: Arial; margin: 20px; }
+  #chat { border:1px solid #ccc; height:300px; overflow-y:scroll; padding:5px; margin-bottom:10px; }
+  #msg { width:70%; }
+</style>
+</head>
+<body>
+
+<h2>WebRTC P2P Chat (max 4 kişi)</h2>
+
+<div>
+  <label>İsmin: </label>
+  <input id="nameInput" placeholder="İsmini gir">
+  <button onclick="saveName()">Kaydet</button>
+</div>
+
+<div>
+  <label>Oda Kodu: </label>
+  <input id="roomInput" placeholder="Oda kodunu gir veya oluştur">
+  <button onclick="joinRoom()">Katıl / Oluştur</button>
+</div>
+
+<div id="chat"></div>
+
+<input id="msg" placeholder="Mesaj yaz">
+<button onclick="sendMsg()">Gönder</button>
+
+<script src="https://unpkg.com/simple-peer/simplepeer.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.6.1/dist/socket.io.min.js"></script>
+
+<script>
+let username = localStorage.getItem("username");
+let room = null;
+let peers = {};
+let socket = null;
+
+if(username) {
+    document.getElementById("nameInput").value = username;
+    addChat("Sistem: Hoşgeldin " + username);
+}
+
+function saveName() {
+    username = document.getElementById("nameInput").value;
+    if(!username) return alert("İsim boş olamaz!");
+    localStorage.setItem("username", username);
+    addChat("Sistem: Hoşgeldin " + username);
+}
+
+function addChat(msg) {
+    let chatDiv = document.getElementById("chat");
+    chatDiv.innerHTML += msg + "<br>";
+    chatDiv.scrollTop = chatDiv.scrollHeight;
+}
+
+function joinRoom() {
+    room = document.getElementById("roomInput").value;
+    if(!room) return alert("Oda kodu boş olamaz!");
+    // Socket.io sinyal sunucusuna bağlanıyoruz (hazır ücretsiz)
+    socket = io("https://signaling.simplewebrtc.com:443");
+    
+    socket.emit("join-room", room);
+    
+    socket.on("user-joined", id => {
+        if(Object.keys(peers).length >= 3) return alert("Maksimum 4 kişi!");
+        let peer = new SimplePeer({ initiator: true, trickle: false });
+        peers[id] = peer;
+
+        peer.on("signal", data => {
+            socket.emit("signal", { target: id, signal: data });
+        });
+
+        peer.on("data", data => {
+            addChat(data.toString());
+        });
+    });
+
+    socket.on("signal", ({ from, signal }) => {
+        if(!peers[from]) {
+            let peer = new SimplePeer({ initiator: false, trickle: false });
+            peers[from] = peer;
+
+            peer.on("signal", data => {
+                socket.emit("signal", { target: from, signal: data });
+            });
+
+            peer.on("data", data => {
+                addChat(data.toString());
+            });
+        }
+        peers[from].signal(signal);
+    });
+
+    socket.on("user-left", id => {
+        if(peers[id]) delete peers[id];
+        addChat("Sistem: Kullanıcı ayrıldı " + id);
+    });
+
+    addChat("Sistem: Odaya katıldın! Oda kodu: " + room);
+}
+
+function sendMsg() {
+    let msg = document.getElementById("msg").value;
+    if(!msg || !username) return alert("Önce isim ve mesaj gir!");
+    document.getElementById("msg").value = "";
+    let fullMsg = username + ": " + msg;
+    addChat(fullMsg);
+
+    Object.values(peers).forEach(p => {
+        p.send(fullMsg);
+    });
+}
+</script>
+
+</body>
+</html>
